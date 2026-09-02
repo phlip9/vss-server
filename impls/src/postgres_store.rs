@@ -657,7 +657,7 @@ where
 		&self, user_token: String, request: ListKeyVersionsRequest,
 	) -> Result<ListKeyVersionsResponse, VssError> {
 		let store_id = &request.store_id;
-		let key_prefix = &request.key_prefix;
+		let key_prefix = request.key_prefix.as_deref().unwrap_or_default();
 		let page_token = &request.page_token;
 		let page_size = request.page_size.unwrap_or(i32::MAX);
 
@@ -691,16 +691,14 @@ where
 
 		let conn = self.pool.get().await?;
 
-		let key_like = format!("{}%", key_prefix.as_deref().unwrap_or_default());
-
 		let rows = if let Some(ref token) = page_token {
 			let page_sort_order = decode_page_token(token)?;
-			let stmt = "SELECT key, version, sort_order FROM vss_db WHERE user_token = $1 AND store_id = $2 AND sort_order < $3 AND key LIKE $4 AND key != $5 ORDER BY sort_order DESC LIMIT $6";
+			let stmt = "SELECT key, version, sort_order FROM vss_db WHERE user_token = $1 AND store_id = $2 AND sort_order < $3 AND starts_with(key, $4) AND key != $5 ORDER BY sort_order DESC LIMIT $6";
 			let params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = vec![
 				&user_token,
 				&store_id,
 				&page_sort_order,
-				&key_like,
+				&key_prefix,
 				&GLOBAL_VERSION_KEY,
 				&fetch_limit,
 			];
@@ -708,9 +706,9 @@ where
 				.await
 				.map_err(|e| Error::new(ErrorKind::Other, format!("Query error: {}", e)))?
 		} else {
-			let stmt = "SELECT key, version, sort_order FROM vss_db WHERE user_token = $1 AND store_id = $2 AND key LIKE $3 AND key != $4 ORDER BY sort_order DESC LIMIT $5";
+			let stmt = "SELECT key, version, sort_order FROM vss_db WHERE user_token = $1 AND store_id = $2 AND starts_with(key, $3) AND key != $4 ORDER BY sort_order DESC LIMIT $5";
 			let params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
-				vec![&user_token, &store_id, &key_like, &GLOBAL_VERSION_KEY, &fetch_limit];
+				vec![&user_token, &store_id, &key_prefix, &GLOBAL_VERSION_KEY, &fetch_limit];
 			conn.query(stmt, &params)
 				.await
 				.map_err(|e| Error::new(ErrorKind::Other, format!("Query error: {}", e)))?
