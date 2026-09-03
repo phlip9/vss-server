@@ -1,7 +1,8 @@
+use crate::const_utils::const_concat_str;
 use crate::migrations::*;
 
 use api::error::VssError;
-use api::kv_store::{KvStore, GLOBAL_VERSION_KEY, INITIAL_RECORD_VERSION};
+use api::kv_store::{KvStore, GLOBAL_VERSION_KEY};
 use api::types::{
 	DeleteObjectRequest, DeleteObjectResponse, GetObjectRequest, GetObjectResponse, KeyValue,
 	ListKeyVersionsRequest, ListKeyVersionsResponse, PutObjectRequest, PutObjectResponse,
@@ -34,6 +35,7 @@ const KEY_COLUMN: &str = "key";
 const VALUE_COLUMN: &str = "value";
 const VERSION_COLUMN: &str = "version";
 const SORT_ORDER_COLUMN: &str = "sort_order";
+const INITIAL_RECORD_VERSION_STR: &str = "1";
 
 /// Page token is the `sort_order` value of the last item in the previous page,
 /// encoded as a decimal string.
@@ -390,13 +392,17 @@ where
 	async fn execute_non_conditional_upsert(
 		&self, transaction: &Transaction<'_>, vss_record: &VssDbRecord,
 	) -> io::Result<u64> {
-		let stmt = format!("INSERT INTO vss_db (user_token, store_id, key, value, version, created_at, last_updated_at)
-                    VALUES ($1, $2, $3, $4, {}, $5, $6)
-                    ON CONFLICT (user_token, store_id, key) DO UPDATE
-                    SET value = EXCLUDED.value, version = {}, last_updated_at = EXCLUDED.last_updated_at", INITIAL_RECORD_VERSION, INITIAL_RECORD_VERSION);
+		#[rustfmt::skip]
+		const STMT: &str = const_concat_str!(
+			"INSERT INTO vss_db (user_token, store_id, key, value, version, created_at, last_updated_at) ",
+			"VALUES ($1, $2, $3, $4, ", INITIAL_RECORD_VERSION_STR, ", $5, $6) ",
+			"ON CONFLICT (user_token, store_id, key) DO UPDATE ",
+			"SET value = EXCLUDED.value, version = ", INITIAL_RECORD_VERSION_STR,
+			", last_updated_at = EXCLUDED.last_updated_at",
+		);
 		let num_rows = transaction
 			.execute(
-				&stmt,
+				STMT,
 				&[
 					&vss_record.user_token,
 					&vss_record.store_id,
@@ -416,12 +422,15 @@ where
 	async fn execute_conditional_insert(
 		&self, transaction: &Transaction<'_>, vss_record: &VssDbRecord,
 	) -> io::Result<u64> {
-		let stmt = format!("INSERT INTO vss_db (user_token, store_id, key, value, version, created_at, last_updated_at)
-                    VALUES ($1, $2, $3, $4, {}, $5, $6)
-                    ON CONFLICT DO NOTHING", INITIAL_RECORD_VERSION);
+		#[rustfmt::skip]
+		const STMT: &str = const_concat_str!(
+			"INSERT INTO vss_db (user_token, store_id, key, value, version, created_at, last_updated_at) ",
+			"VALUES ($1, $2, $3, $4, ", INITIAL_RECORD_VERSION_STR, ", $5, $6) ",
+			"ON CONFLICT DO NOTHING",
+		);
 		let num_rows = transaction
 			.execute(
-				&stmt,
+				STMT,
 				&[
 					&vss_record.user_token,
 					&vss_record.store_id,
@@ -741,10 +750,13 @@ where
 
 #[cfg(test)]
 mod tests {
-	use super::{decode_page_token, drop_database, encode_page_token, DUMMY_MIGRATION, MIGRATIONS};
+	use super::{
+		decode_page_token, drop_database, encode_page_token, DUMMY_MIGRATION,
+		INITIAL_RECORD_VERSION_STR, MIGRATIONS,
+	};
 	use crate::postgres_store::PostgresPlaintextBackend;
 	use api::define_kv_store_tests;
-	use api::kv_store::KvStore;
+	use api::kv_store::{KvStore, INITIAL_RECORD_VERSION};
 	use api::types::{
 		DeleteObjectRequest, GetObjectRequest, KeyValue, ListKeyVersionsRequest, PutObjectRequest,
 	};
@@ -1158,6 +1170,11 @@ mod tests {
 		}
 
 		drop_database(&POSTGRES_ENDPOINT, DEFAULT_DB, vss_db, NoTls).await.unwrap();
+	}
+
+	#[test]
+	fn initial_record_version_string_matches_numeric_value() {
+		assert_eq!(&INITIAL_RECORD_VERSION.to_string(), INITIAL_RECORD_VERSION_STR);
 	}
 
 	#[test]
