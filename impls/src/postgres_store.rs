@@ -752,10 +752,14 @@ mod tests {
 	};
 
 	use bytes::Bytes;
+	use std::sync::LazyLock;
 	use tokio::sync::OnceCell;
 	use tokio_postgres::NoTls;
 
-	const POSTGRES_ENDPOINT: &str = "postgresql://postgres:postgres@localhost:5432";
+	static POSTGRES_ENDPOINT: LazyLock<String> = LazyLock::new(|| {
+		std::env::var("POSTGRES_ENDPOINT")
+			.unwrap_or_else(|_| "postgresql://postgres:postgres@localhost:5432".to_string())
+	});
 	const DEFAULT_DB: &str = "postgres";
 	const MIGRATIONS_START: usize = 0;
 	const MIGRATIONS_END: usize = MIGRATIONS.len();
@@ -788,8 +792,8 @@ mod tests {
 		let vss_db = "postgres_kv_store_tests";
 		START
 			.get_or_init(|| async {
-				let _ = drop_database(POSTGRES_ENDPOINT, DEFAULT_DB, vss_db, NoTls).await;
-				let store = PostgresPlaintextBackend::new(POSTGRES_ENDPOINT, DEFAULT_DB, vss_db)
+				let _ = drop_database(&POSTGRES_ENDPOINT, DEFAULT_DB, vss_db, NoTls).await;
+				let store = PostgresPlaintextBackend::new(&POSTGRES_ENDPOINT, DEFAULT_DB, vss_db)
 					.await
 					.unwrap();
 				let (start, end) = store.migrate_vss_database(MIGRATIONS).await.unwrap();
@@ -798,7 +802,7 @@ mod tests {
 			})
 			.await;
 		let store =
-			PostgresPlaintextBackend::new(POSTGRES_ENDPOINT, DEFAULT_DB, vss_db).await.unwrap();
+			PostgresPlaintextBackend::new(&POSTGRES_ENDPOINT, DEFAULT_DB, vss_db).await.unwrap();
 		let (start, end) = store.migrate_vss_database(MIGRATIONS).await.unwrap();
 		assert_eq!(start, MIGRATIONS_END);
 		assert_eq!(end, MIGRATIONS_END);
@@ -811,19 +815,21 @@ mod tests {
 	#[should_panic(expected = "We do not allow downgrades")]
 	async fn panic_on_downgrade() {
 		let vss_db = "panic_on_downgrade_test";
-		let _ = drop_database(POSTGRES_ENDPOINT, DEFAULT_DB, vss_db, NoTls).await;
+		let _ = drop_database(&POSTGRES_ENDPOINT, DEFAULT_DB, vss_db, NoTls).await;
 		{
 			let mut migrations = MIGRATIONS.to_vec();
 			migrations.push(DUMMY_MIGRATION);
-			let store =
-				PostgresPlaintextBackend::new(POSTGRES_ENDPOINT, DEFAULT_DB, vss_db).await.unwrap();
+			let store = PostgresPlaintextBackend::new(&POSTGRES_ENDPOINT, DEFAULT_DB, vss_db)
+				.await
+				.unwrap();
 			let (start, end) = store.migrate_vss_database(&migrations).await.unwrap();
 			assert_eq!(start, MIGRATIONS_START);
 			assert_eq!(end, MIGRATIONS_END + 1);
 		};
 		{
-			let store =
-				PostgresPlaintextBackend::new(POSTGRES_ENDPOINT, DEFAULT_DB, vss_db).await.unwrap();
+			let store = PostgresPlaintextBackend::new(&POSTGRES_ENDPOINT, DEFAULT_DB, vss_db)
+				.await
+				.unwrap();
 			let _ = store.migrate_vss_database(MIGRATIONS).await.unwrap();
 		};
 	}
@@ -831,10 +837,11 @@ mod tests {
 	#[tokio::test]
 	async fn new_migrations_increments_upgrades() {
 		let vss_db = "new_migrations_increments_upgrades_test";
-		let _ = drop_database(POSTGRES_ENDPOINT, DEFAULT_DB, vss_db, NoTls).await;
+		let _ = drop_database(&POSTGRES_ENDPOINT, DEFAULT_DB, vss_db, NoTls).await;
 		{
-			let store =
-				PostgresPlaintextBackend::new(POSTGRES_ENDPOINT, DEFAULT_DB, vss_db).await.unwrap();
+			let store = PostgresPlaintextBackend::new(&POSTGRES_ENDPOINT, DEFAULT_DB, vss_db)
+				.await
+				.unwrap();
 			let (start, end) = store.migrate_vss_database(MIGRATIONS).await.unwrap();
 			assert_eq!(start, MIGRATIONS_START);
 			assert_eq!(end, MIGRATIONS_END);
@@ -842,8 +849,9 @@ mod tests {
 			assert_eq!(store.get_schema_version().await, MIGRATIONS_END);
 		};
 		{
-			let store =
-				PostgresPlaintextBackend::new(POSTGRES_ENDPOINT, DEFAULT_DB, vss_db).await.unwrap();
+			let store = PostgresPlaintextBackend::new(&POSTGRES_ENDPOINT, DEFAULT_DB, vss_db)
+				.await
+				.unwrap();
 			let (start, end) = store.migrate_vss_database(MIGRATIONS).await.unwrap();
 			assert_eq!(start, MIGRATIONS_END);
 			assert_eq!(end, MIGRATIONS_END);
@@ -854,8 +862,9 @@ mod tests {
 		let mut migrations = MIGRATIONS.to_vec();
 		migrations.push(DUMMY_MIGRATION);
 		{
-			let store =
-				PostgresPlaintextBackend::new(POSTGRES_ENDPOINT, DEFAULT_DB, vss_db).await.unwrap();
+			let store = PostgresPlaintextBackend::new(&POSTGRES_ENDPOINT, DEFAULT_DB, vss_db)
+				.await
+				.unwrap();
 			let (start, end) = store.migrate_vss_database(&migrations).await.unwrap();
 			assert_eq!(start, MIGRATIONS_END);
 			assert_eq!(end, MIGRATIONS_END + 1);
@@ -866,8 +875,9 @@ mod tests {
 		migrations.push(DUMMY_MIGRATION);
 		migrations.push(DUMMY_MIGRATION);
 		{
-			let store =
-				PostgresPlaintextBackend::new(POSTGRES_ENDPOINT, DEFAULT_DB, vss_db).await.unwrap();
+			let store = PostgresPlaintextBackend::new(&POSTGRES_ENDPOINT, DEFAULT_DB, vss_db)
+				.await
+				.unwrap();
 			let (start, end) = store.migrate_vss_database(&migrations).await.unwrap();
 			assert_eq!(start, MIGRATIONS_END + 1);
 			assert_eq!(end, MIGRATIONS_END + 3);
@@ -879,21 +889,22 @@ mod tests {
 		};
 
 		{
-			let store =
-				PostgresPlaintextBackend::new(POSTGRES_ENDPOINT, DEFAULT_DB, vss_db).await.unwrap();
+			let store = PostgresPlaintextBackend::new(&POSTGRES_ENDPOINT, DEFAULT_DB, vss_db)
+				.await
+				.unwrap();
 			let list = store.get_upgrades_list().await;
 			assert_eq!(list, [MIGRATIONS_START, MIGRATIONS_END, MIGRATIONS_END + 1]);
 			let version = store.get_schema_version().await;
 			assert_eq!(version, MIGRATIONS_END + 3);
 		}
 
-		drop_database(POSTGRES_ENDPOINT, DEFAULT_DB, vss_db, NoTls).await.unwrap();
+		drop_database(&POSTGRES_ENDPOINT, DEFAULT_DB, vss_db, NoTls).await.unwrap();
 	}
 
 	#[tokio::test]
 	async fn supports_objects_up_to_non_large_object_threshold() {
 		let vss_db = "supports_objects_up_to_non_large_object_threshold";
-		let _ = drop_database(POSTGRES_ENDPOINT, DEFAULT_DB, vss_db, NoTls).await;
+		let _ = drop_database(&POSTGRES_ENDPOINT, DEFAULT_DB, vss_db, NoTls).await;
 
 		const MAXIMUM_SUPPORTED_VALUE_SIZE: usize = 1024 * 1024 * 1024;
 		const PROTOCOL_OVERHEAD_MARGIN: usize = 150;
@@ -903,8 +914,9 @@ mod tests {
 		let kv = KeyValue { key: "k1".into(), version: 0, value: Bytes::from(large_value.clone()) };
 
 		{
-			let store =
-				PostgresPlaintextBackend::new(POSTGRES_ENDPOINT, DEFAULT_DB, vss_db).await.unwrap();
+			let store = PostgresPlaintextBackend::new(&POSTGRES_ENDPOINT, DEFAULT_DB, vss_db)
+				.await
+				.unwrap();
 			let (start, end) = store.migrate_vss_database(MIGRATIONS).await.unwrap();
 			assert_eq!(start, MIGRATIONS_START);
 			assert_eq!(end, MIGRATIONS_END);
@@ -953,17 +965,18 @@ mod tests {
 				.unwrap();
 		};
 
-		drop_database(POSTGRES_ENDPOINT, DEFAULT_DB, vss_db, NoTls).await.unwrap();
+		drop_database(&POSTGRES_ENDPOINT, DEFAULT_DB, vss_db, NoTls).await.unwrap();
 	}
 
 	#[tokio::test]
 	async fn list_orders_by_sort_order_desc() {
 		let vss_db = "list_orders_by_sort_order_desc";
-		let _ = drop_database(POSTGRES_ENDPOINT, DEFAULT_DB, vss_db, NoTls).await;
+		let _ = drop_database(&POSTGRES_ENDPOINT, DEFAULT_DB, vss_db, NoTls).await;
 
 		{
-			let store =
-				PostgresPlaintextBackend::new(POSTGRES_ENDPOINT, DEFAULT_DB, vss_db).await.unwrap();
+			let store = PostgresPlaintextBackend::new(&POSTGRES_ENDPOINT, DEFAULT_DB, vss_db)
+				.await
+				.unwrap();
 			let (start, end) = store.migrate_vss_database(MIGRATIONS).await.unwrap();
 			assert_eq!(start, MIGRATIONS_START);
 			assert_eq!(end, MIGRATIONS_END);
@@ -1014,17 +1027,18 @@ mod tests {
 			assert_eq!(all_keys, vec!["b_key", "a_key", "c_key"]);
 		}
 
-		drop_database(POSTGRES_ENDPOINT, DEFAULT_DB, vss_db, NoTls).await.unwrap();
+		drop_database(&POSTGRES_ENDPOINT, DEFAULT_DB, vss_db, NoTls).await.unwrap();
 	}
 
 	#[tokio::test]
 	async fn list_zero_page_size_should_return_only_global_version() {
 		let vss_db = "list_zero_page_size_should_return_only_global_version";
-		let _ = drop_database(POSTGRES_ENDPOINT, DEFAULT_DB, vss_db, NoTls).await;
+		let _ = drop_database(&POSTGRES_ENDPOINT, DEFAULT_DB, vss_db, NoTls).await;
 
 		{
-			let store =
-				PostgresPlaintextBackend::new(POSTGRES_ENDPOINT, DEFAULT_DB, vss_db).await.unwrap();
+			let store = PostgresPlaintextBackend::new(&POSTGRES_ENDPOINT, DEFAULT_DB, vss_db)
+				.await
+				.unwrap();
 			let (start, end) = store.migrate_vss_database(MIGRATIONS).await.unwrap();
 			assert_eq!(start, MIGRATIONS_START);
 			assert_eq!(end, MIGRATIONS_END);
@@ -1051,17 +1065,18 @@ mod tests {
 			assert_eq!(resp.next_page_token.filter(|t| !t.is_empty()), None);
 		}
 
-		drop_database(POSTGRES_ENDPOINT, DEFAULT_DB, vss_db, NoTls).await.unwrap();
+		drop_database(&POSTGRES_ENDPOINT, DEFAULT_DB, vss_db, NoTls).await.unwrap();
 	}
 
 	#[tokio::test]
 	async fn list_should_return_empty_page_token_when_exact_fit() {
 		let vss_db = "list_should_return_empty_page_token_when_exact_fit";
-		let _ = drop_database(POSTGRES_ENDPOINT, DEFAULT_DB, vss_db, NoTls).await;
+		let _ = drop_database(&POSTGRES_ENDPOINT, DEFAULT_DB, vss_db, NoTls).await;
 
 		{
-			let store =
-				PostgresPlaintextBackend::new(POSTGRES_ENDPOINT, DEFAULT_DB, vss_db).await.unwrap();
+			let store = PostgresPlaintextBackend::new(&POSTGRES_ENDPOINT, DEFAULT_DB, vss_db)
+				.await
+				.unwrap();
 			let (start, end) = store.migrate_vss_database(MIGRATIONS).await.unwrap();
 			assert_eq!(start, MIGRATIONS_START);
 			assert_eq!(end, MIGRATIONS_END);
@@ -1089,17 +1104,18 @@ mod tests {
 			assert_eq!(resp.next_page_token.filter(|t| !t.is_empty()), None);
 		}
 
-		drop_database(POSTGRES_ENDPOINT, DEFAULT_DB, vss_db, NoTls).await.unwrap();
+		drop_database(&POSTGRES_ENDPOINT, DEFAULT_DB, vss_db, NoTls).await.unwrap();
 	}
 
 	#[tokio::test]
 	async fn list_should_return_empty_page_token_on_last_non_empty_page() {
 		let vss_db = "list_should_return_empty_page_token_on_last_non_empty_page";
-		let _ = drop_database(POSTGRES_ENDPOINT, DEFAULT_DB, vss_db, NoTls).await;
+		let _ = drop_database(&POSTGRES_ENDPOINT, DEFAULT_DB, vss_db, NoTls).await;
 
 		{
-			let store =
-				PostgresPlaintextBackend::new(POSTGRES_ENDPOINT, DEFAULT_DB, vss_db).await.unwrap();
+			let store = PostgresPlaintextBackend::new(&POSTGRES_ENDPOINT, DEFAULT_DB, vss_db)
+				.await
+				.unwrap();
 			let (start, end) = store.migrate_vss_database(MIGRATIONS).await.unwrap();
 			assert_eq!(start, MIGRATIONS_START);
 			assert_eq!(end, MIGRATIONS_END);
@@ -1143,7 +1159,7 @@ mod tests {
 			assert!(second_page.global_version.is_none());
 		}
 
-		drop_database(POSTGRES_ENDPOINT, DEFAULT_DB, vss_db, NoTls).await.unwrap();
+		drop_database(&POSTGRES_ENDPOINT, DEFAULT_DB, vss_db, NoTls).await.unwrap();
 	}
 
 	#[test]
