@@ -840,7 +840,7 @@ where
 #[cfg(test)]
 mod tests {
 	use super::{
-		decode_page_token, drop_database, encode_page_token, DUMMY_MIGRATION,
+		decode_page_token, drop_database, encode_page_token, Client, DUMMY_MIGRATION,
 		INITIAL_RECORD_VERSION_STR, MIGRATIONS,
 	};
 	use crate::postgres_store::PostgresPlaintextBackend;
@@ -1264,6 +1264,21 @@ mod tests {
 	#[test]
 	fn initial_record_version_string_matches_numeric_value() {
 		assert_eq!(&INITIAL_RECORD_VERSION.to_string(), INITIAL_RECORD_VERSION_STR);
+	}
+
+	#[tokio::test]
+	async fn prepared_statements_are_reused_across_transactions() {
+		let mut conn = Client::connect(&POSTGRES_ENDPOINT, DEFAULT_DB, NoTls).await.unwrap();
+		let stmt = "SELECT $1::BIGINT";
+
+		let mut transaction = conn.transaction().await.unwrap();
+		transaction.execute(stmt, &[&1_i64]).await.unwrap();
+		transaction.commit().await.unwrap();
+		assert_eq!(conn.statement_cache.statements.len(), 1);
+
+		let rows = conn.query(stmt, &[&2_i64]).await.unwrap();
+		assert_eq!(rows[0].get::<_, i64>(0), 2);
+		assert_eq!(conn.statement_cache.statements.len(), 1);
 	}
 
 	#[test]
