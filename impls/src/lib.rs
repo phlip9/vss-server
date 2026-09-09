@@ -5,6 +5,8 @@
 //! simplify the development process for Lightning wallets by providing a secure means to store
 //! and manage the essential state required for Lightning Network (LN) operations.
 //!
+//! The `postgres-native-tls` feature enables the native TLS backend and is enabled by default.
+//!
 //! [`KvStore`]: api::kv_store::KvStore
 
 #![deny(rustdoc::broken_intra_doc_links)]
